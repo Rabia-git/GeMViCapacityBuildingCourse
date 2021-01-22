@@ -1,0 +1,207 @@
+---
+title: 'Workshop 3. SOLUTIONS'
+
+---
+
+
+#### Plotting the deterministic and stochastic results of the introductory example
+
+```{r}
+##CORRECTION
+plot(ts$time,ts$populationSize,type='l',ylim=c(0,N),xlim=c(0,50),ylab='Population size',xlab='Time')
+lines(tsStoch$time,tsStoch$populationSize,type='l',col='darkred')
+```
+
+<br>
+
+#### Putting together the Gillespie function
+```{r}
+# Recalling the needed parameters
+totalTime = 356*1.      # Total simulation time
+N = 1e4                  # Population size
+I0 = 5.                 # Initial number of infecteds
+beta = 1.2               # Transmission rate
+gamma = 0.5              # Recovery rate
+
+# declaring the function with the necessary parameter, each having a by default value
+
+Gillespie = function (){
+    # we declare the variables to keep track of the individuals' health state
+    t = 0                 # Current time
+    S = N - I0            # Current number of susceptibles
+    I = I0                # Current number of infecteds
+    R = 0                 # Current number of recovered individuals
+    
+    df = data.frame() #prepare empty output dataframe
+    
+    i=0
+    # we repeat the calculations until we run out of time
+    while (isTRUE(t < totalTime)){
+        i=i+1
+        # we store the current state of the population in the output lists
+        df = rbind(df,data.frame(times=t,S=S,I=I,R=R))  # we store the current state of the population in the output dataframe
+        
+        # we calculate the probability of each possible event in the system
+        pevent1 = beta*S*I/N
+        pevent2 = gamma*I
+        pevents = pevent1 + pevent2
+        
+        # if we still have infecteds, we calculate the time of occurence of the next event
+        if (pevents > 0) {
+            t = t + rexp(1,rate=pevents)
+        }
+        
+        # if the next event happens after the total duration of the simulation, we stop the simulation
+        if (isTRUE(t > totalTime) || pevents == 0){
+          break
+        }
+            
+        
+        # we randomly pick the event happening, and we make it happen
+        if (runif(1) < (pevent1/pevents)){
+            S = S - 1
+            I = I + 1
+        } else {
+            I = I - 1
+            R = R + 1
+        }
+    } 
+    
+    return (df)  # once the time of simulation is up, or if we run out of infecteds, we return the collected results
+}
+```
+
+<br>
+
+#### Multiple simulations and comparison with the deterministic model
+
+```{r}
+totalTime = 356*1.      # Total simulation time
+N = 1e4                  # Population size
+I0 = 5.                 # Initial number of infecteds
+S = 1-I0
+beta = 1.2               # Transmission rate
+gamma = 0.5              # Recovery rate
+
+
+plot(NA,NA,bty="n",ylab="Number of individuals",xlab="time",lwd=2,ylim=c(0,N),xlim=c(0,50))
+    legend(x="topright",c("S","I","R"),lty=1,col=c("blue","red2","green"),bty="n",lwd=2)
+n_sims=5
+for (i in 1:n_sims){
+    results = Gillespie()
+    lines(results$times,results$S,type='s',col='blue',lwd=2)
+    lines(results$times,results$I,type='s',col='red2',lwd=2)
+    lines(results$times,results$R,type='s',col='green',lwd=2)
+}
+
+
+# Deterministic model and solving
+DeterministicSIR <- function(time, variables, parameters) {
+  with(as.list(c(variables, parameters)), {
+    dS <- -beta * I * S
+    dI <-  beta * I * S - gamma * I
+    dR <-  gamma * I
+    return(list(c(dS, dI, dR)))
+  })
+}
+
+I0 = 5./N  
+S = 1-I0
+
+library(deSolve)
+detSirResults <- ode(
+  y = c(S=1-I0, I=I0,  R=0 ),     # initial values    
+  times = seq(0, totalTime),       # time, sloving for one year
+  func = DeterministicSIR,            # function
+  parms = c(beta, gamma)              # parameters
+)
+
+df <- as.data.frame(detSirResults)
+
+lines(df[,1],df[,3]*N,type='l',col='black',lwd=2)
+```
+
+<br>
+
+#### Gillespie SIRS with demography and seasonality
+
+```{r}
+## SOLUTION
+
+# Recalling the needed parameters and adding demography and seasonality
+totalTime = 365*10.
+N = 1e3
+I0 = 5
+beta = 1
+gamma = .8
+B = 0.005
+mu = 0.005
+omega = 1/90.
+Xi = .05
+phi = 334
+epsilon = .001
+
+
+SeasonalSIRSGillespie = function (){
+  t = 0
+  S = N - I0
+  I = I0
+  R = 0
+  df = data.frame() #prepare empty output dataframe
+  
+  while (isTRUE(t < totalTime)){
+
+    df = rbind(df,data.frame(times=t,S=S,I=I,R=R))  # we store the current state of the population in the output dataframe
+    
+    betat = beta*exp(Xi*cospi(2*(t-phi)/365.25))  # Seasonal beta as a function of time
+    
+    # we calculate the probability of each possible event in the system
+    pevent1 = betat*S*I/N + epsilon   # infection or importation
+    pevent2 = gamma*I         # recovery
+    pevent3 = B               # birth
+    pevent4 = mu              # death
+    pevent6 = omega*R         # event of waning immunity (for SIRS): R -> S with rate omega
+    
+    pevents = pevent1 + pevent2 + pevent3 + pevent4 + pevent6 
+    # if we still have infecteds, we calculate the time of occurrence of the next event
+    if (pevents > 0){
+      t = t + rexp(1,rate=pevents)
+    }
+    
+    # we randomly pick the event happening, and we make it happen
+    if (runif(1) < (pevent1 / pevents)){       # infection
+      S = S - 1
+      I = I + 1
+    } else if (runif(1) < (pevent2 / pevents)){   # recovery
+      I = I - 1
+      R = R + 1
+    } else if (runif(1) < (pevent3 / pevents)){   # birth
+      S = S + 1
+    } else if (runif(1) < (pevent6 / pevents)){   # waning immunity
+      R = R - 1
+      S = S + 1
+    } else {
+      r = runif(1)*(S+I+R)      # death can be from S, I or R
+      if (r < S)
+        S = S - 1
+       else if (r < S+I)
+        I = I - 1
+       else if (R > 0)
+        R = R - 1
+      
+    }
+  }
+  return (df)
+}
+
+results = SeasonalSIRSGillespie()
+
+# plotting
+plot(results$times,results$S,type='s',col='blue',bty="n",ylab="Number of individuals",xlab="time",lwd=2,ylim=c(0,N))
+lines(results$times,results$I,type='s',col='red2',lwd=2)
+lines(results$times,results$R,type='s',col='green',lwd=2)
+legend(x="topright",c("S","I","R"),lty=1,col=c("blue","red2","green"),bty="n",lwd=2)
+
+
+```
+
