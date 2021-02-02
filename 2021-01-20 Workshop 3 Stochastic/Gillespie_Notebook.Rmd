@@ -118,7 +118,7 @@ $$
 $$
 The assumption that the events occur independently comes from the Markov property - if event $i$ is more likely to happen after event $j$ has happened than after event $k$ has happened, then the rates are not fully determined by the current system state and so our system is not a Markov chain. Based on this total rate, the time to the $n$th event is distributed exponentialy with probability density function
 $$
-\delta t_n = \frac{1}{\sum_i r_i}\exp(-\delta t_n/\sum_i r_i).
+\mathbb{P}(\delta t_n) = \frac{1}{\sum_i r_i}\exp(-\delta t_n/\sum_i r_i).
 $$
 This gives us a way to choose event times in a stochastic simulation, but it still doesn't tell us how to choose the events themselves. We start by noting that each event-rate pair defines a *Poisson process*. This is just a stochastic process where events happen at a fixed rate in continuous time. We will not go through the working here, but one can show that based on the properties of Poisson processes, the probability that the first event to occur is event $i$ is equal to the size of rate $r_i$ relative to the rest of the rates. Thus, denoting by $p_i$ the probability that we choose event $i$ to occur at time $t_{n-1}+\delta t_n$, we have
 $$
