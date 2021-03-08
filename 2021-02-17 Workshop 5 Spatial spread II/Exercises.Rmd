@@ -1,0 +1,343 @@
+---
+title: "Modelling spatial spread I - Exercises"
+author: "Andrea Parisi"
+output:
+  pdf_document: default
+  bookdown::html_document2:
+    css: style.css
+    df_print: paged
+  html_document:
+    css: style.css
+    df_print: paged
+  slidy_presentation: default
+fontsize: 12pt
+---
+\sffamily
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+```{r echo=FALSE}
+library(pracma)
+library(deSolve)
+library(viridis)
+
+sir.model <- function( t, x, params )  {
+	patches <- params[[1]]   # This is the number of sub-populations
+	mu <- params[[2]]        # Birth/death rate
+	gamma <- params[[3]]     # Recovery rate
+	beta <- params[[4]]      # Common transmission rate
+	rho <- params[[5]]       # Contact matrix
+	NN  <- params[[6]]       # Sub-population sizes
+
+	# Extract the susceptibles and infectives
+	pop.sus <- x[1:patches]
+	pop.inf <- x[(patches+1):(2*patches)]
+	lambda <- beta * rho %*% pop.inf  # Matrix multiplication
+
+	# Find rhs of (1) using vector calculus
+	ds <- mu*(NN-pop.sus)-lambda*pop.sus/NN
+	di <- +lambda*pop.sus/NN - (mu+gamma)*pop.inf
+	res <- c(ds,di)
+	list(res)
+}
+
+patches <- 16
+NN <- rep(10000, patches)
+N0 <- sum(NN)
+
+mu <- 1.0/(70*365)
+gamma <- 1./2.2
+beta  <- 1.66
+
+randomContactMatrix <- function( patches )  {
+	rho <- matrix(2*runif(patches*patches), nrow=patches, ncol=patches) / patches
+	# Diagonal elements represent individuals not moving 
+	# and are set by applying the constraint on rho
+	for (ii in 1:nrow(rho))  {
+		rho[ii,ii] <- 0
+	}
+	# Make sure that sum_j rho_ij = 1
+	for (jj in 1:ncol(rho))  {
+		if (sum(rho[,jj]) > 1)  {
+			rho[,jj] <- rho[,jj] / sum(rho[,jj])
+		}
+		rho[jj,jj] <- 1-sum(rho[,jj])
+	}
+	return(rho)
+}
+rho <- randomContactMatrix(patches)
+
+times <- seq( from = 0, to = 40, by = 0.05)
+start.I0 <- rep(0, patches)
+start.I0[1] <- 10
+start.S0 <- NN-start.I0
+xstart <- c( start.S0, start.I0 )
+params <- list(patches, mu, gamma, beta, rho, NN)
+
+res <- deSolve::ode( xstart, times, sir.model, params, method=deSolve::rk4 )
+
+output <- data.frame( res )
+
+showOutput <- function(out, nregions, sizes)  {
+	x.min <- min(out$time)
+	x.max <- max(out$time)
+	y.min <- 0
+	y.max <- max(out[,(2+nregions):ncol(out)])
+	plot( c(x.min, x.max), c(y.min, y.max), type="n", col=3, lwd=2,
+		  ylim=c(0,y.max), xlab="Time", ylab="Prevalence" )
+	for (ii in 1:nregions)  {
+		lines( out$time, out[,(1+nregions+ii)], lwd=2, col=viridis(nregions)[ii] )
+	}
+}
+```
+
+
+## **Exercise 1**
+
+*Increase the number of patches and observe how the infection curves will tend to overlap when such number becomes large.  Can you explain why?*
+
+We start from 16 patches, then we increase to 50, 300 and 1000.
+
+```{r}
+patches <- c(16,50,300,1000)
+NN <- list()
+output <- list()
+for (jj in 1:4)  {
+	NN[[jj]] <- rep(10000, patches[jj])
+	rho <- randomContactMatrix(patches[jj])
+	start.I0 <- rep(0, patches[jj])
+	start.I0[1] <- 10
+	start.S0 <- NN[[jj]]-start.I0
+	xstart <- c( start.S0, start.I0 )
+	params <- list(patches[jj], mu, gamma, beta, rho, NN[[jj]])
+	
+	res <- deSolve::ode( xstart, times, sir.model, params, method=deSolve::rk4 )
+	
+	output[[jj]] <- data.frame( res )
+}
+```
+
+Each patch will average out difference between influx from other patches: as the number of patches increases, all patches will see their influx converge towards a common average value.
+
+```{r}
+for (jj in 1:4)  {
+	showOutput(output[[jj]], patches[jj], NN[[jj]])
+}
+```
+
+
+
+# **Exercise 2**
+
+*Increase or decrease the population size and the initial number of infectives of each patch by the same amount.  What happens to the infection curves?  Why?*
+
+
+```{r}
+sizes <- c(10000, 300000, 10000000)
+NN <- list()
+output <- list()
+side <- 4
+patches <- 16
+rho <- randomContactMatrix(patches)
+for (jj in 1:3)  {
+	NN[[jj]] <- rep(sizes[jj], patches)
+	
+	start.I0 <- rep(0, patches)
+	start.I0[1] <- 10
+	start.S0 <- NN[[jj]]-start.I0
+	xstart <- c( start.S0, start.I0 )
+	params <- list(patches, mu, gamma, beta, rho, NN[[jj]])
+	
+	res <- deSolve::ode( xstart, times, sir.model, params, method=deSolve::rk4 )
+	output[[jj]] <- data.frame( res )
+}
+
+for (jj in 1:3)  {
+	showOutput(output[[jj]], patches, NN[[jj]])
+}
+```
+Increasing the population size produces identical curve, shifted due to the initial condition.  Since the 10 initial infective represent an decreasing fraction of the population, the bigger the population size, the longer it will take for the disease to spread significantly, resulting in a shift to the right of the epidemic curve.
+
+Of course...
+
+```{r}
+sizes <- c(10000, 300000, 10000000)
+NN <- list()
+output <- list()
+side <- 4
+patches <- 16
+rho <- randomContactMatrix(patches)
+for (jj in 1:3)  {
+	NN[[jj]] <- rep(sizes[jj], patches)
+	
+	start.I0 <- rep(0, patches)
+	start.I0[1] <- 10*(sizes[jj]/10000)
+	start.S0 <- NN[[jj]]-start.I0
+	xstart <- c( start.S0, start.I0 )
+	params <- list(patches, mu, gamma, beta, rho, NN[[jj]])
+	
+	res <- deSolve::ode( xstart, times, sir.model, params, method=deSolve::rk4 )
+	output[[jj]] <- data.frame( res )
+}
+
+for (jj in 1:3)  {
+	showOutput(output[[jj]], patches, NN[[jj]])
+}
+```
+
+... if the initial condition is increased proportionally to the population size, the output is identical since these are continuous model and the contact matrix represents population fractions.
+
+
+## **Exercise 3**
+
+This is the original nearest-neighbours matrix
+```{r}
+patches <- 16
+NN <- rep(10000, patches)
+start.I0 <- rep(0, patches)
+start.I0[1] <- 10
+start.S0 <- NN-start.I0
+xstart <- c( start.S0, start.I0 )
+rho <- zeros(patches) # Generates a patches x patches matrix of zeros
+for (dst in 1:patches)  {
+	for (src in 1:patches)  {
+		if (dst == src+side || dst == src-side ||
+				   dst == src+1 || dst == src-1)  {
+			rho[dst,src] <- 0.01
+		}
+	}
+}
+for (jj in 1:patches)  {
+	rho[jj,jj] = 1-sum(rho[,jj])
+}
+params <- list(patches, mu, gamma, beta, rho, NN)
+res <- deSolve::ode( xstart, times, sir.model, params, method=deSolve::rk4 )
+output1 <- data.frame( res )
+```
+
+This is a contact matrix with additional tranmission to second nearest neighbours
+```{r}
+patches <- 16
+NN <- rep(10000, patches)
+rho <- zeros(patches) # Generates a patches x patches matrix of zeros
+for (dst in 1:patches)  {
+	for (src in 1:patches)  {
+		if (dst == src+side || dst == src-side ||
+				   dst == src+1 || dst == src-1)  {
+			rho[dst,src] <- 0.01
+		} else if (dst == src+side-1 || dst == src-side-1 ||
+				   dst == src+side+1 || dst == src-side+1)  {
+			rho[dst,src] <- 0.005
+		}
+	}
+}
+for (jj in 1:patches)  {
+	rho[jj,jj] = 1-sum(rho[,jj])
+}
+params <- list(patches, mu, gamma, beta, rho, NN)
+res <- deSolve::ode( xstart, times, sir.model, params, method=deSolve::rk4 )
+output2 <- data.frame( res )
+
+showOutput(output1, patches, NN)
+showOutput(output2, patches, NN)
+```
+
+Increasing the coupling between counties makes outbreaks in far countries occur earlier.
+
+
+## **Exercise 4**
+
+```{r echo=FALSE}
+library(pracma)
+library(sf)
+#library(lwgeom)  # Required by some shapefiles
+library(viridis)
+
+counties.wsg84 <- read_sf(dsn="Data/Local/map.shp")
+counties.pop <- read.table(file="Data/Local/population.dat", header=TRUE)
+coordinates <- as.matrix( read.table(file="Data/Local/coordinates.dat", 
+									 header=TRUE) )
+counties.mapper <- read.table(file="Data/Local/mapper.dat", header=TRUE)
+patches <- nrow(counties.pop)
+comm <- read.table(file="Data/Local/comm.dat", header=TRUE)
+```
+
+
+```{r echo=FALSE}
+build.contact.matrix <- function( map, comm, colname, spenthours_per_week = 40.0)  {
+	npatches <- nrow(map)
+	mm <- zeros(npatches) # Generates a patches x patches matrix of zeros
+	for (dst in 1:npatches)  {
+		for (src in 1:npatches)  {
+			if (dst == src)  {
+				# Entries rho_{jj} will be handled separately
+				next
+			} else {
+				hasentry <- nrow(comm[ comm$dst == dst & comm$src == src, ])
+				if (hasentry > 1)  {
+					print("Too many entries for src-dst data")
+					quit()
+				} else if (hasentry)  {
+					entry <- comm[ comm$dst == dst & comm$src == src, ]
+					mm[dst,src] <- entry[,colname]
+					mm[dst,src] <- mm[dst,src] / map[ map$id == src, ]$pop
+					mm[dst,src] <- mm[dst,src]*spenthours_per_week/(7*24.0)
+				}
+			}
+		}
+	}
+	for (src in 1:npatches)  {
+		tot <- sum(mm[,src])
+		mm[src,src] <- 1 - tot
+	}
+	
+	## Here a sanity check:
+	if (min(mm) < 0)  {
+		stop( "Sanity check on rho did not work!")
+	}
+	return (mm)
+}
+```
+
+```{r}
+NN <- counties.wsg84$pop
+beta <- 1.66
+times <- seq( from = 0, to = 40, by = 0.05)
+
+rho <- build.contact.matrix( counties.wsg84, comm, "Total", 34.0 )
+patches <- nrow(rho)
+
+# Find counties 'Modoc' and 'Los Angeles'
+modoc <- which(counties.wsg84$NAME == "Modoc")
+start.I0 <- rep(0, patches)
+start.I0[modoc] <- 10
+start.S0 <- NN-start.I0
+xstart <- c( start.S0, start.I0 )
+params <- list(patches, mu, gamma, beta, rho, NN)
+
+res <- deSolve::ode( xstart, times, sir.model, params, method=deSolve::rk4 )
+
+output <- data.frame( res )
+showOutput(output, patches, NN)
+```
+
+```{r}
+losangeles <- which(counties.wsg84$NAME == "Los Angeles")
+start.I0 <- rep(0, patches)
+start.I0[losangeles] <- 10
+start.S0 <- NN-start.I0
+xstart <- c( start.S0, start.I0 )
+params <- list(patches, mu, gamma, beta, rho, NN)
+
+res <- deSolve::ode( xstart, times, sir.model, params, method=deSolve::rk4 )
+
+output <- data.frame( res )
+showOutput(output, patches, NN)
+```
+
+Los Angeles has higher connections than the Modoc county, thus an initial infective in Los Angeles would cause a faster epidemic throughout California.
+
+
+
+

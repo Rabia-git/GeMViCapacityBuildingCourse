@@ -1,0 +1,192 @@
+---
+title: "Modelling spatial spread II - Exercises"
+author: "Andrea Parisi"
+output:
+  pdf_document: default
+  bookdown::html_document2:
+    css: style.css
+    df_print: paged
+  html_document:
+    css: style.css
+    df_print: paged
+  slidy_presentation: default
+fontsize: 12pt
+---
+\sffamily
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r echo=FALSE}
+library(pracma)
+library(sf)
+#library(lwgeom)  # Required by some shapefiles
+library(viridis)
+```
+
+```{r echo=FALSE}
+counties.wsg84 <- read_sf(dsn="Data/Local/map.shp")
+counties.pop <- read.table(file="Data/Local/population.dat", header=TRUE)
+coordinates <- as.matrix( read.table(file="Data/Local/coordinates.dat",
+									 header=TRUE) )
+counties.mapper <- read.table(file="Data/Local/mapper.dat", header=TRUE)
+patches <- nrow(counties.pop)
+comm <- read.table(file="Data/Local/comm.dat", header=TRUE)
+comm.frame <- read.table(file="Data/Local/commframe.dat", header=TRUE)
+
+CPC <- function( data, colname )  {
+	numerator <- 2*sum( apply( data, 1, function(x) {min(x['flux'], x[colname])}) )
+	denominator <- sum(data['flux']) + sum(data[colname])
+	return(numerator/denominator)
+}
+```
+
+```{r echo=FALSE}
+library(pracma)
+library(deSolve)
+library(viridis)
+
+sir.model <- function( t, x, params )  {
+	patches <- params[[1]]   # This is the number of sub-populations
+	mu <- params[[2]]        # Birth/death rate
+	gamma <- params[[3]]     # Recovery rate
+	beta <- params[[4]]      # Common transmission rate
+	rho <- params[[5]]       # Contact matrix
+	NN  <- params[[6]]       # Sub-population sizes
+
+	# Extract the susceptibles and infectives
+	pop.sus <- x[1:patches]
+	pop.inf <- x[(patches+1):(2*patches)]
+	lambda <- beta * rho %*% pop.inf  # Matrix multiplication
+
+	# Find rhs of (1) using vector calculus
+	ds <- mu*(NN-pop.sus)-lambda*pop.sus/NN
+	di <- +lambda*pop.sus/NN - (mu+gamma)*pop.inf
+	res <- c(ds,di)
+	list(res)
+}
+
+patches <- nrow(counties.wsg84)
+NN <- counties.wsg84$pop
+
+mu <- 1.0/(70*365)
+gamma <- 1./2.2
+beta  <- 1.66
+
+times <- seq( from = 0, to = 40, by = 0.1)
+start.I0 <- rep(0, patches)
+start.I0[1] <- 10
+start.S0 <- NN-start.I0
+xstart <- c( start.S0, start.I0 )
+
+
+showOutput <- function(out, nregions, sizes)  {
+	x.min <- min(out$time)
+	x.max <- max(out$time)
+	y.min <- 0
+	y.max <- max(out[,(2+nregions):ncol(out)])
+	plot( c(x.min, x.max), c(y.min, y.max), type="n", col=3, lwd=2,
+		  ylim=c(0,y.max), xlab="Time", ylab="Prevalence" )
+	for (ii in 1:nregions)  {
+		lines( out$time, out[,(1+nregions+ii)], lwd=2, col=viridis(nregions)[ii] )
+	}
+}
+
+build.contact.matrix <- function( map, comm, colname)  {
+	npatches <- nrow(map)
+	mm <- zeros(npatches) # Generates a patches x patches matrix of zeros
+	for (dst in 1:npatches)  {
+		for (src in 1:npatches)  {
+			if (dst == src)  {
+				# Entries rho_{jj} will be handled separately
+				next
+			} else {
+				hasentry <- nrow(comm[ comm$dst == dst & comm$src == src, ])
+				if (hasentry)  {
+					entry <- comm[ comm$dst == dst & comm$src == src, ]
+					mm[dst,src] <- entry[,colname]
+					mm[dst,src] <- mm[dst,src] / map[ map$id == src, ]$pop
+				}
+			}
+		}
+	}
+	for (src in 1:npatches)  {
+		tot <- sum(mm[,src])
+		mm[src,src] <- 1 - tot
+	}
+	
+	## Here a sanity check:
+	if (min(mm) < 0)  {
+		stop( "Sanity check on rho did not work!")
+	}
+	return (mm)
+}
+
+```
+
+
+# **Exercise 1**
+
+*Take 5 distinct random subsets of commuting data and estimate the parameters of the radiation model for each subset.  How do they compare with the parameters measured from the full set?*
+```{r}
+len <- nrow(comm.frame)
+fulldata <- lm( flux ~ fact_radModel -1, comm.frame)
+print(paste("-",fulldata$coefficients))
+for (kk in 1:5)  {
+	sam <- sample( seq(1,len), size=len/5, replace=FALSE )
+	dat <- lm( flux ~ fact_radModel -1, comm.frame[sam,])
+	print( paste(kk,dat$coefficients) )
+}
+```
+
+Estimating the parameters of a model for human mobility from an incomplete subset of data might lead to underestimates or overestimates.  Indeed it depends mostly of what the data we have represent in term of importance, as the next excercise clarifies.
+
+
+# **Exercise 2**
+
+*Order the commuting data in terms of fluxes from the largest to the smallest; take the first $p$ fluxes and estimate the radiation model parameter. How does the esitmate change with $p$?  What does this tell us about parameter estimation for scarce data?*
+
+
+```{r}
+len <- nrow(comm.frame)
+ordered.comm.frame <- comm.frame[ order(-comm.frame$flux), ]
+xx <- c()
+yy <- c()
+for (maxx in 1:nrow(ordered.comm.frame))  {
+	dat <- ordered.comm.frame[ seq(1,maxx), ]
+	xx <- c(xx, nrow(dat)/len)
+	rad_model <- lm( flux ~ fact_radModel - 1, dat )
+	# The fitted parameter is N_c/N
+	yy <- c(yy, rad_model$coefficients)
+}
+plot( xx, yy )
+```
+
+In case of scarce data, it is important to have access to information regarding those areas between which travel is most intense and thus represent the most important fluxes within the region under consideration.
+
+
+
+# **Exercise 3**
+
+*Compare the spread of an SIR model where the spatial contact matrix is obtained from true data with that predicted with the radiation model. Can you see any difference in the outcomes?*
+
+```{r}
+rho = build.contact.matrix( counties.wsg84, comm.frame, "flux")
+params <- list(patches, mu, gamma, beta, rho, NN)
+res <- deSolve::ode( xstart, times, sir.model, params, method=deSolve::rk4 )
+output <- data.frame( res )
+showOutput(output, patches, NN)
+
+rho = build.contact.matrix( counties.wsg84, comm.frame, "pred_rad_model")
+params <- list(patches, mu, gamma, beta, rho, NN)
+res <- deSolve::ode( xstart, times, sir.model, params, method=deSolve::rk4 )
+output <- data.frame( res )
+showOutput(output, patches, NN)
+
+rho = build.contact.matrix( counties.wsg84, comm.frame, "pred_grav_model")
+params <- list(patches, mu, gamma, beta, rho, NN)
+res <- deSolve::ode( xstart, times, sir.model, params, method=deSolve::rk4 )
+output <- data.frame( res )
+showOutput(output, patches, NN)
+```
