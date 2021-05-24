@@ -1,0 +1,508 @@
+---
+output:
+  html_notebook: default
+  html_document: default
+---
+----
+title: 'Deterministic and Stochastic SEIR '
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+  html_notebook: default
+---
+
+###### **Main contact for this notebook: Joy Kiarie (Joyce Kiarie <jckiarie@gmail.com)**
+<br>
+
+### 1. Course context
+
+**Purpose and scope of this work**
+
+There has been concerted efforts in modeling COVID-19 to describe its transmission
+dynamics. These models are either deterministic or stochastic, where there is only one
+exact solution and where there is a range of solutions respectively. An SEIR model for
+Kenya will be developed for COVID-19.
+
+The specific aim for this work is to:
+
+ - implement in R deterministic SEIR model for COVID-19.
+ 
+ - implement in R stochastic SEIR model for COVID-19.
+
+
+**Promoters**
+
+
+- Prof. SM Mwalili (smwalili@strathmore.edu)
+- Prof. Rachel Mbogo(rmbogo@strathmore.edu)
+
+
+
+**Helpful references for the course**
+
+
+<br>
+
+### 2. Background
+
+**Mathematical models of infectious diseases**
+
+
+
+We can divide infectious disease models into two broad classes:
+
+- **Deterministic models** describe the infectious disease dynamics using a set of rate-based equations. These models are accurate in large populations where the population is approximately a continuum.
+
+- **Stochastic models** allow for randomness, and account for the inherently discrete nature of populations of individuals. This makes stochastic models more realistic than deterministic ones, but also more challenging to analyse and implement.
+
+With a large enough host population, the deterministic version approximates the average population dynamics.
+In this notebook we will introduce the basics of deterministic modelling.
+        
+<br>
+
+**Compartmental models**
+
+Compartmental models are the most widely-used class of model in infectious disease dynamics (and are common in many other areas of mathematical biology). Each individual in the population is assigned to a compartment based on some characteristic of interest, with individuals in the same compartment sharing the same status *(W3)*. The infectious disease dynamics are determined by the interactions between people of different compartments. The key to formulating such a model is to choose a set of compartments and transitions which are appropriate to the situation we want to model. In this workshop we will introduce a few commonly used compartmental structures, and focus on what is probably the most commonly used of all: the SIR model.
+
+
+<br>
+
+### 3. Determinstic SEIR without demography
+
+**Model formulation**
+
+This system can be represented schematically, as follows:
+ <!-- <img src="img/SEIR_noDemography.png"/> -->
+
+```{r}
+## Create an SEIR function
+# Load deSolve library
+library(deSolve)
+library(ggplot2)
+library(deSolve)
+library(reshape2)
+
+# Function to return derivatives of SEIR model
+seir_ode<-function(t,Y,par){
+  S  <-Y[1]
+  E  <-Y[2]
+  A  <-Y[3]
+  M  <-Y[4]
+  H  <-Y[5]
+  C  <-Y[6]
+  D  <-Y[7]
+  R  <-Y[8]
+  
+  N  <- S + E + A + M + H + C + D + R
+  
+  
+  beta1     <- par[1]
+  beta2     <- par[2]
+  omega     <- par[3]
+  delta     <- par[4]
+  gammaA    <- par[5]
+  gammaM    <- par[6]
+  gammaH    <- par[7]
+  gammaC    <- par[8]
+  kappa     <- par[9]
+  zeta      <- par[10]
+  lambdaC   <- par[11]
+  
+  
+  dYdt<-vector(length=8)
+  dYdt[1]=-beta1*S*A/N-beta2*S*M/N
+  dYdt[2]=beta1*S*A/N+beta2*S*M/N-(omega)*E
+  dYdt[3]=delta*omega*E-(gammaA)*A
+  dYdt[4]=(1-delta)*omega*E-(gammaM + kappa)*M
+  dYdt[5]= kappa*M-(zeta+gammaH)*H
+  dYdt[6]= zeta*H-(lambdaC + gammaC)*C
+  dYdt[7]= lambdaC*C
+  dYdt[8]= gammaA*A + gammaM*M + gammaH*H + gammaC*C
+  
+  return(list(dYdt))
+}
+
+```
+
+We next choose values for the model parameters $\beta$ and $\gamma$, and define initial conditions. In this example, we start with a very small proportion of infecteds $I(0)=1e^{-6}$, and no recovereds $R(0)=0$. Hence, all the rest are susceptibles $S(0)=1-1e^{-6}$.
+
+```{r}
+# Set parameter values
+beta1     <- .15
+beta2     <- .08
+omega     <- 0.196
+delta     <- 85/100
+gammaA    <- 1
+gammaM    <- 0.9815
+gammaH    <- 0.1
+gammaC    <- 0.5
+kappa     <- 0.044
+zeta      <- 0.3
+lambdaC   <- 0.25
+
+
+S0  <- 995
+E0  <- 2
+A0  <- 1
+M0  <- 0
+H0  <- 0
+C0  <- 0
+D0  <- 0
+R0  <- 0
+
+N0  <- S0 + E0 + A0 + M0 + H0 + C0 + D0 + R0
+
+init<-c(S0,E0,A0,M0,H0,C0,D0,R0)/N0
+
+tt<-seq(0,210)
+
+par0<-c(beta1 ,beta2 ,omega ,delta ,
+        kappa ,gammaA ,gammaM ,gammaH,gammaC,zeta,lambdaC)
+
+```
+
+
+*deSolve* is an R library that can be used to solve ODE problems. We can use it to solve our model over some duration - let's try 80 days:
+
+```{r}
+## Solve using ode (General Solver for Ordinary Differential Equations)
+output<-as.data.frame(ode(y=init,func = seir_ode,parms=par0,times = tt))
+colnames(output)<- c("time","S","E","A","M","H","C","D","R")
+out_long=melt(output,id="time")
+```
+
+
+
+```{r}
+# To plot the proportion of susceptible, infected and recovered individuals over time
+ggplot(data = out_long,          
+       aes(x = time, y = value, colour = variable, group = variable)) +  
+  geom_line() +xlab("Time (days)")+ylab("Proportion of the population") +
+  scale_color_discrete(name="State")+ theme(text = element_text(size = 20)) +
+  ylim(0, 1.00)
+```
+
+
+### 4. Stochastic SEIR
+
+
+To avoid permanent extinction, we also add occasional imports of infection into the population at a rate $\epsilon*$. With these considerations, we have the following event-rate pairs:
+ 
+$$
+\text{ Transition }    \text{  Transition rate}\\\
+(S, E) \to  (S-1,E+1)  \text{ at rate }    \frac{\beta_1 S A}{N}+ \frac{\beta_2 S M}{N} \\        
+(E,A) \to  (E-1,A+1)  \text{ at rate }    \delta \omega E \\
+(E,M) \to  (E-1,M+1)  \text{ at rate }    (1-\delta) \omega E \\
+(A,R) \to  (A-1,R+1)  \text{ at rate }    \gamma_A  A \\         
+(M,R) \to  (M-1,R+1)  \text{ at rate }    \gamma_M M \\ 
+(M,H) \to  (M-1,H+1)  \text{ at rate }     \kappa M \\   
+(H,R) \to  (H-1,R+1)  \text{ at rate }    \gamma_H  H \\ 
+(H,C) \to  (H-1,C+1)  \text{ at rate }     \zeta H \\    
+(C,R) \to  (C-1,R+1)  \text{ at rate }     \gamma_C  C \\ 
+(C,D) \to  (C-1,D+1)  \text{ at rate }      \lambda_C C\\
+$$
+
+ 
+        
+        
+```{r}
+# Set parameter values
+beta1     <- .15
+beta2     <- .08
+omega     <- 0.196
+delta     <- 85/100
+gammaA    <- 1
+gammaM    <- 0.9815
+gammaH    <- 0.1
+gammaC    <- 0.5
+kappa     <- 0.044
+zeta      <- 0.3
+lambdaC   <- 0.25
+N = 1e3                # Population size
+A0 = 4                  # Initial number of infecteds 
+M0 = 1                  # Initial number of infecteds 
+
+# Set parameter values
+beta1     <- .15
+beta2     <- .08
+omega     <- 0.196
+delta     <- 85/100
+gammaA    <- 1
+gammaM    <- 0.9815
+gammaH    <- 0.1
+gammaC    <- 0.5
+kappa     <- 0.044
+zeta      <- 0.3
+lambdaC   <- 0.25
+
+
+S0  <- 995
+E0  <- 0
+A0  <- 4
+M0  <- 1
+H0  <- 0
+C0  <- 0
+D0  <- 0
+R0  <- 0
+```
+
+
+
+In the next cell we declare the variables we need to track the time, the number of infecteds, the number or susceptibles, and the number of recovered individuals. These will update at each step of our simulation.
+
+```{r}
+t = 0                 # Current time
+S = N - 5          # Current number of susceptibles
+E = 10
+A = A0          # Current number of infecteds assymp
+M = M0           # Current number of infecteds symp
+H = 0            # Current number of hosp
+C = 0            # Current number of critically ill
+D = 0            # Current number of deaths
+R = 0                 # Current number of recovered individuals
+```
+
+Since we want to plot the evolutions of these variables, we store them in a dataframe (or lists, or arrays). We therefore prepare an empty dataframe to use as output of our model:
+
+        df = data.frame()    # Output data (to be plotted later)
+
+
+**Monte Carlo step**
+
+In the next cell we set our rates based on the current state of the system, along with their sum.
+
+```{r}
+       rate  <- numeric(10)
+        rate[1] = (beta1*S*A/N)+ (beta2*S*M/N)
+        rate[2] = (delta*omega)
+        rate[3] = (1-delta)*omega
+        rate[4] = gammaA*A
+        rate[5] = gammaM*M 
+        rate[6] = kappa*M
+        rate[7] = gammaH*H
+        rate[8] = zeta*H
+        rate[9] = gammaC*C
+        rate[10] = lambdaC*C
+        rates = sum(rate)
+        print(rates)
+```  
+
+Provided the total rate is non-zero, we draw the "time to next event" from an exponential distribution and update the current time accordingly:
+
+
+```{r}        
+if (rates > 0) {
+            t = t + rexp(1,rates)
+        }
+```
+If the next event happens after the total duration of the simulation, or if we have no more infecteds in the system, then we stop the simulation:
+
+        if (t > totalTime || rates == 0){
+            break;
+        }
+        
+
+**Update**
+
+Now that we know when the next event will happen, we draw a uniform random variable and use the "divided line" method to choose whether we get an infection or a recovery event:
+
+        if (runif(1) < (rate[1]/rates)){#S-1,E+1
+            S = S - 1
+            E = E + 1
+        } else if (runif(1) < (rate[2]/rates)){#E-1,A+1
+              E = E - 1
+              A = A + 1
+            } else if (runif(1) < (rate[3]/rates)){#E-1,M+1
+              E = E - 1
+              M = M + 1
+              } else if (runif(1) < (rate[4]/rates)){ #A-1,R+1
+                A = A - 1
+                R = R + 1
+              } else if (runif(1) < (rate[5]/rates)){ #M-1,R+1
+                M = M - 1
+                R = R + 1
+                } else     if (runif(1) < (rate[6]/rates)){ #M-1,H+1
+                    M = M - 1
+                    H = H + 1
+                    } else if (runif(1) < (rate[8]/rates)){ #H-1,R+1
+                        H= H - 1
+                        R = R + 1
+                        } else if (runif(1) < (rate[7]/rates)){ #H-1,C+1
+                          H= H - 1
+                          C = C + 1
+                          } else if(runif(1) < (rate[9]/rates)){ #C-1,R+1
+                              C = C - 1
+                              R= R + 1
+                              }
+                              else{ #C-1,D+1
+                              C = C - 1
+                              D = D + 1
+                              }
+
+           
+          
+We then store the new counts into the output dataframe that we prepared:
+
+        df = rbind(df,data.frame(times=t,S=S,E=E,Ia=Ia,Im=Im,H=H,C=C,D=D,R=R))
+
+
+<br>
+
+### Gillespie function
+
+**Preparing the Gillespie function**
+
+##### *$\rightarrow$Try it yourself*
+
+We can combine the previous cells into a function that we call `Gillespie()`. 
+
+```{r}
+# Recalling the needed parameters
+totalTime =360 # Total simulation time in days
+beta1     <- .3#.15
+beta2     <- .08
+omega     <- 0.196
+delta     <- 85/100
+gammaA    <- 1
+gammaM    <- 0.9815
+gammaH    <- 0.1
+gammaC    <- 0.5
+kappa     <- 0.044
+zeta      <- 0.3
+lambdaC   <- 0.25
+N = 1e3                 # Population size
+A0 = 40                  # Initial number of infecteds 
+M0 = 1                  # Initial number of infecteds 
+
+
+# declaring the Gillespie function
+Gillespie = function() {
+  t = 0 # Current time
+  S = N - 5 # Current number of susceptibles
+  E = 5
+  A = A0 # Current number of infecteds assymp
+  M = M0 # Current number of infecteds symp
+  H = 0 # Current number of hosp
+  C = 0 # Current number of critically ill
+  D = 0 # Current number of deaths
+  R = 0 # Current number of recovered
+  
+  
+
+  
+  df = data.frame() # Output data(to be plotted later)
+  i = 0
+  while (isTRUE(t < totalTime)) {
+    i = i + 1
+    df = rbind(df, data.frame(times = t, S = S, E = E,
+                              A = A,
+                              M = M, H = H, C = C, D=D,R = R))
+    # Monte Carlo step
+    # rate <- numeric(10)
+    #    rate  <- numeric(10)
+    #     rate[1] = (beta1*S*A/N)+ (beta2*S*M/N)
+    #     rate[2] = (delta*omega)*E
+    #     rate[3] = (1-delta)*omega*E
+    #     rate[4] = gammaA*A
+    #     rate[5] = gammaM*M 
+    #     rate[6] = kappa*M
+    #     rate[7] = gammaH*H
+    #     rate[8] = zeta*H
+    #     rate[9] = gammaC*C
+    #     rate[10] = lambdaC*C
+    #     rates = sum(rate)
+    
+        
+        
+        rate  <- numeric(10)
+        rate[1] = (beta1*S*A/N)+ (beta2*S*M/N)
+        rate[2] = (delta*omega)*E
+        rate[3] = (1-delta)*omega*E 
+        rate[4] = gammaA*A 
+        rate[5] = gammaM*M  
+        rate[6] = kappa*M 
+        rate[7] = gammaH*H 
+        rate[8] = zeta*H
+        rate[9] = gammaC*C 
+         rate[10] = lambdaC*C 
+        rates = sum(rate)
+        
+        
+    if (rates > 0) {
+       t = t + rexp(1, rate = rates)
+    }
+     
+    if (isTRUE(t > totalTime) || rates == 0) {
+      break
+    }
+    
+    # # Update
+        if (runif(1) < (rate[1]/rates)){#S-1,E+1
+            S = S - 1
+            E = E + 1
+        } else if (runif(1) < (rate[2]/rates)){#E-1,A+1
+              E = E - 1
+              A = A + 1
+            } else if (runif(1) < (rate[3]/rates)){#E-1,M+1
+              E = E - 1
+              M = M + 1
+              } else if (runif(1)< (rate[4]/rates)){ #A-1,R+1
+                A = A - 1
+                R = R + 1
+              } else if (runif(1) < (rate[5]/rates)){ #M-1,R+1
+                M = M - 1
+                R = R + 1
+                } else     if (runif(1) < (rate[6]/rates)){ #M-1,H+1
+                    M = M - 1
+                    H = H + 1
+                    } else if (runif(1)  < (rate[7]/rates)){ #H-1,R+1
+                        H= H - 1
+                        R = R + 1
+                        } else if (runif(1) < (rate[8]/rates)){ #H-1,C+1
+                          H= H - 1
+                          C = C + 1
+                          } else if(runif(1) < (rate[9]/rates)){ #C-1,R+1
+                              C = C - 1
+                              R= R + 1
+                              }
+                              else  if(runif(1) < (rate[10]/rates)){ #C-1,D+1
+                              C = C -1 
+                              D = D +1
+                              }
+    }
+   return (df)
+}
+
+
+
+#ggplot(data = out_long,          
+#       aes(x = time, y = value, colour = variable, group = variable)) +  
+#  geom_line() +xlab("Time (days)")+ylab("Proportion of the population") +
+#  scale_color_discrete(name="State")+ theme(text = element_text(size = 20)) +
+#  ylim(0, 1.00)
+
+
+```
+
+
+**Plotting the results**
+
+In the cell below we run a single implementation of our Gillespie simulation and plot the results. Note that when we call the function with empty parameters, it uses the default values set in the function's declaration.
+
+```{r}
+
+resultsG=Gillespie()
+# plotting
+plot(resultsG$times,resultsG$S,type='s',col='blue',bty="n",ylab="Number of individuals",xlab="time",lwd=2,ylim=c(0,N))
+lines(resultsG$times,resultsG$E,type='s',col='orange',lwd=2)
+lines(resultsG$times,resultsG$A,type='s',col='red2',lwd=2)
+lines(resultsG$times,resultsG$M,type='s',col='yellow',lwd=2)
+lines(resultsG$times,resultsG$C,type='s',col='black',lwd=2)
+lines(resultsG$times,resultsG$R,type='s',col='green',lwd=2)
+legend(x="topright",c("S","E","A","M","C","R"),lty=1,col=c("blue","orange", "red2","yellow","black","green"),bty="n",lwd=2)
+
+```
+
+<br>
+

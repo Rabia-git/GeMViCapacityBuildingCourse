@@ -1,0 +1,307 @@
+---
+title: "Workshop 5 - Age-structured compartmental model"
+output:
+  html_document: 
+    keep_md: yes
+  html_notebook: default
+  pdf_document: default
+---
+
+
+###### **Main contact for this notebook: Joe Hilton (joe.hilton@warwick.ac.uk)**
+<br>
+
+### 1. Course context
+
+**Purpose and scope of the course**
+
+This material has been developed as part of the *GeMVi* project: *NIHR Global Health Research Group on the Application of Genomics and Modelling to the Control of Virus Pathogens* in East Africa and the University of Warwick.
+
+In these workshops you will be introduced to some common techniques used in infectious disease modelling. The topics covered will include the implementation of deterministic and stochastic compartmental models, the use of maximum likelihood estimation to analyse super-spreading behaviour in novel disease outbreaks, modelling of contact patterns, and optimisation techniques for fitting epidemic models to real data.
+
+**Contributors**
+
+The contributors are all part of the GeMVi project:
+
+- Prof. James Nokes (JNokes@kemri-wellcome.org)
+- Prof. Matt Keeling (m.j.keeling@warwick.ac.uk)
+- Dr. Joe Hilton (j.hilton@warwick.ac.uk)
+- Dr. Rabia Aziza (rabia.aziza@warwick.ac.uk)
+- Dr. Samuel Brand (s.brand@warwick.ac.uk)
+- Dr. Andrea Parisi (andrea.parisi@warwick.ac.uk)
+
+**Helpful references for the course**
+
+- Anderson, R. M., & May, R. M. (1992). Infectious Diseases of Humans: Dynamics and Control.
+- Bjørnstad, O. N. (2018). Epidemics, models and data using R. https://doi.org/10.1007/978-3-319-97487-3
+- Diekmann, O., & Heesterbeek, J. A. P. (2000). Mathematical epidemiology of infectious diseases: model building, analysis and interpretation. 104: John Wiley and Sons.
+- Keeling, Matt J., & Pejman Rohani. Modeling Infectious Diseases in Humans and Animals. Princeton University Press, 2008.
+- Martcheva, M., 2015. An Introduction to Mathematical Epidemiology, Texts in Applied Mathematics. Springer US, Boston, MA. https://doi.org/10.1007/978-1-4899-7612-3
+- Vynnycky, Emilia, & White, Richard G. An Introduction to Infectious Disease Modelling
+
+<br>
+
+### 2. Background
+
+Infectious disease dynamics are driven by interactions between populations of hosts and pathogens. While these populations are commonly modelled as homogeneous sets of identical individuals, in practice we know that human populations are characterised by a range of heterogeneities, many of which are important to the spread of infection and the impact of disease. In this workshop we will look at the ways we can capture population heterogeneities in infectious disease models, and what impact this has on infectious disease dynamics.
+
+There are two basic forms of heterogeneity which are relevant to infectious disease dynamics. One form is stratified contact behaviour: childhood infections like chickenpox, measles, and rubella tend to concentrate in younger age groups because children typically interact primarily with other children, while sexually transmitted diseases naturally spread more quickly among the most sexually active sections of the population (Martcheva, 2015 ; Keeling and Rohani, 2011). The other form of heterogeneity is risk-stratification in disease history (i.e. progression between compartments in a compartmental infection model) and morbidity. Early on in the SARS-CoV-2 pandemic, it was established that older people were more likely to experience severe symptoms or die from infection than younger people, and accordingly many models include age dependencies in parameters corresponding to susceptibility, symptomatic probability, and mortality rate (Keeling et al., 2020 ; Prem et al., 2020 ; Wagner et al., 2020). In this workshop, we will mainly focus on the first form of heterogeneity, that of contact behaviour. While their are a range of different risk structures which are commonly considered by infectious disease modellers, our examples are all based on age structure, although much of the methodology can be applied to other types of population heterogeneity.
+
+In earlier workshops we have worked with the homogeneous (or simple) SIR model: a population is divided into three age classes, $S$ (susceptible), $I$ (infected), and $R$ (recovered). In age-structured models, we typically divide the population into a finite number of discrete age classes, with the $a$th age class containing all the individuals between ages $L_a$ and $U_a$, where $L_a$ and $U_a$ are lower and upper bounds with $L_a<U_a$. The infectious compartments are divided accordingly, so that $S_a$ contains all the susceptible individuals between ages $L_a$ and $U_a$, $I_a$ the infectious individuals in this age class, and $R_a$ all the recovered individuals in this age class. We use $N_a=S_a+I_a+R_a$ to denote the total number of individuals in age class $a$, with the total population given by $N=\sum\limits_aN_a$. In a relatively simple age-structured model with two age classes, the state of the entire population would be given by $(S_1,I_1,R_1,S_2,I_2,R_2)$.
+
+<br>
+
+### 3. Age-stratified contact behaviour
+
+In a homogeneous SIR model, infections happen at a rate $\beta SI/N$, where $\beta$ is a per-capita transmission rate which captures both the rate at which individuals contact one another and the rate at which infection is transmitted during one of these contact events. In our age-structured model, we want contact rates to vary according to the ages of the individuals involved, while leaving all other aspects of the transmission process homogeneous. So, infection from age class $b$ to age class $a$ should occur at rate $\beta_{ab}S_aI_b/N$ for an age-stratified contact rate $\beta_{ab}$ which is directly proportional to the rate at which age class $a$ individuals encounter age class $b$ individuals. We can express this proportionality as $\beta_{ab} = \tau K_{ab}$, where $K_{ab}$ is the age-stratified contact rate and $\tau$ is the rate at which infection passes along a contact. The contact rates define a matrix $\mathbf{K} = (K_{ab})$, and the transmission rates a matrix $\mathbf{B} = (\beta_{ab})$ with $\mathbf{B}=\tau\mathbf{K}$. This transmission matrix is referred to as a "Who acquires infection from whom?" (WAIFW) matrix; the $(i,j)$th entry tells us how much infection class $i$ individuals pick up from class $j$ individuals.
+
+The age-stratified contact matrix $\mathbf{K}$ can be estimated empirically through contact studies. These are studies which seek to quantify interactions between different age or risk groups, either through surveys which ask individuals about their contact behaviour, or through wearable electronic devices which record physical interactions between wearers. In the box below, we load in an age-stratified contact matrix estimated for Kenya and one estimated for the UK, both taken from a study by Prem et al. Note that these are technically estimates from a model rather than actual survey results; while contact surveys have been conducted in both Kenya and the UK, we use these estimates because they are in the same format, which is convenient for our modelling. The age classes used here are defined according to fifteen 5-year intervals, from age 0 to 75, with the sixteenth containing all individuals age 75 years and over. 
+
+```{r}
+K_kenya = as.matrix(read.csv("data/K_Kenya.csv"))
+K_uk = as.matrix(read.csv("data/K_UK.csv"))
+```
+
+In the box below, we use the `heatmap()` function to visualise these contact matrices. Note that the arguments `Colv = NA, Rowv = NA` ensure that the row and column orders of our matrices are preserved in the plots.
+
+```{r}
+heatmap(K_kenya, Colv = NA, Rowv = NA, scale="column", main="Kenya")
+heatmap(K_uk, Colv = NA, Rowv = NA, scale="column", main="UK")
+```
+
+In both plots there is a strong assortative component, with individuals mixing most strongly with other individuals of the same age class. Children exhibit relatively strong mixing with adults around 20-30 years older than them (their parents), but this mixing is asymmetric since not all adults have children. You can interpret row $i$ of these contact matrices as the expected contacts made by age on a single day by an individual in age class $i$. The $i$th column, on the other hand, give the expected contacts an average person makes with individuals of age class $j$. So, entry $(i,j)$ implicitly accounts for the size of age class $j$, but not of age class $i$, since it describes the behaviour of age class $i$ individuals so is conditioned on that class' size. To see this a bit more clearly, use the box below to calculate the row and column sums of each contact matrix.
+
+```{r}
+cat("Row sums of Kenya-specific contact matrix is given by",rowSums(K_kenya),".\n")
+cat("Column sums of Kenya-specific contact matrix is given by",colSums(K_kenya),".\n")
+cat("Row sums of UK-specific contact matrix is given by",rowSums(K_uk),".\n")
+cat("Column sums of UK-specific contact matrix is given by",colSums(K_uk),".\n")
+```
+You should find that the final entry of the column sums for both countries is substantially smaller than the final entry of the row sums. This final entry corresponds to the 75+ age class; because this class is relatively small, relatively few people will interact with people of this age class, reflected in the small column sum.
+
+### 4. Next generation matrices
+
+Using the WAIFW matrix, we can define an age-structured SIR model (without demography) as follows:
+$$
+\frac{\mathrm{d}\underline{S}}{\mathrm{d}t} = -\underline{S}\mathbf{B}\underline{I}\\
+\frac{\mathrm{d}\underline{I}}{\mathrm{d}t} = \underline{S}\mathbf{B}\underline{I} - \gamma\underline{I}\\
+\frac{\mathrm{d}\underline{R}}{\mathrm{d}t} = \gamma\underline{I},\\
+$$
+where as in the homogeneous SIR model $\gamma^{-1}$ gives the expected infectious period. Here we assume that this infectious period is the same for all age classes.
+
+The WAIFW matrix is defined in terms of rates, with each entry specifying an age-stratified transmission rate. Recall that in the homogeneous SIR model the basic reproductive ratio could be calculated by multiplying the transmission rate by the expected time spent in the infectious class, i.e. $R_0=\beta/\gamma$.This is the expected number of cases generated by a single case, during the early stages of an epidemic when prior immunity is negligible. By the same reasoning, the expected number of cases in age class $i$ generated by a single case in age class $j$ is given by $R_0^{ij}=\beta_{ij}/\gamma$. Taken together, these ratios define a *next generation matrix*, given in our model by the equation
+$$
+\mathbf{L} = \gamma^{-1}\mathbf{B}.
+$$
+To see why it is called the next generation matrix, consider the early stages of an epidemic, when $\underline{S}$ is approximately a vector of ones. In this scenario, given an \emph{infectivity profile} $\underline{I}_0=(I^1_0,...,I^N_0)$, we expect each case in class $j$ to generate a vector of infections $(R_0^{1j},...,R_0^{Nj})$, and so taken together the expected infectivity profile once each initially infectious individual is recovered will be given by
+$$
+\underline{I}_1=\mathbf{L}\underline{I}_0.
+$$
+Based on this relationship, it is reasonably easy to see that the basic reproductive ratio for an age-structured model is given by the leading eigenvalue of the next generation matrix $\mathbf{L}$ (Keeling and Rohani, 2011). This gives us a way to calculate $\tau$, the per-contact transmission rate, given the contact matrix $\mathbf{K}$ and estimates of $R_0$ and $\gamma$. Based on our definition of the next-generation matrix,
+$$
+\mathbf{L}=\gamma^{-1}\tau\mathbf{K}.
+$$
+If $\lambda_L$ is the leading eigenvalue of the next generation matrix $\mathbf{L}$ and $\lambda_K$ is the leading eigenvalue of the contact matrix $\mathbf{K}$, then
+$$
+R_0=\lambda_L = \gamma^{-1}\tau\lambda_K,
+$$
+and so the transmission rate $\tau$ is given by
+$$
+\tau = \frac{R_0\gamma}{\lambda_K}.
+$$
+In the box below, use the Kenya-specific contact matrix we loaded above to estimate $\tau$ for an infection with a COVID-19-like basic reproductive ratio $R_0=2.5$ and $\gamma=1/3$. You can calculate eigenvalues and eigenvectors in R using the `eigen()` function. The eigenvalues are stored in the `$values` field of this function's output. By default, R outputs eigenvalues as complex numbers, so you will need to convert them to real numbers using the `Re` function. Make sure to name your estimate `tau`, as we will use it later on in the notebook.
+```{r}
+#
+R0_ke <- 1
+gam <- 1
+tau <- 1
+
+#
+```
+An important aspect of infectious disease modelling is that many epidemiological quantities are population-specific as well as disease-specific. Use the box below to estimate the basic reproductive ratio of the flu-like infection in the UK by multiplying $\gamma^{-1}\tau$ by the leading eigenvalue of the UK-specific contact matrix.
+```{r}
+#
+
+
+#
+```
+You should find that the estimated basic reproductive ratio under the UK-specific contact matrix is smaller than 2.5, which was the value we defined for the epidemic under Kenya-specific contact parameters. This demonstrates that epidemic models and parameters are population-specific as well as infection specific.
+
+### 5. Modelling an outbreak
+
+We have now defined an age-structured SIR model, and performed some simple fitting to an estimate of $R_0$. In the box below we define a rate function for this model:
+```{r}
+sir_age_func = function(t, u, params) {
+  S    = as.matrix(u[1:nage])
+  I    = as.matrix(u[(nage + 1):(2 * nage)])
+  R    = as.matrix(u[(2 * nage + 1):(3 * nage)])
+  N    = S + I + R
+  
+  I[I < 0] = 0
+  with(as.list(params), {
+    # S, I and R are all vectors of length nage, so will dS, dI, and dR
+    dS = -S * (Beta %*% (I / N)) #we use the matrix multiplication operator %*%
+    dI = -dS - gam * I
+    dR = gam * I
+    out = list(c(dS, dI, dR)) # the output needs to be in the same order as the input compartments
+  })
+}
+```
+
+To implement the model, we need some background population statistics. We will model an outbreak of infection in Nairobi, and to do so we load in an age distribution for the city:
+```{r}
+N = read.csv("data/Nairobi_age_distribution.csv")[,2]
+nage = length(N) # number of age groups
+```
+
+The following box defines initial conditions corresponding to a single case in the 30-35 age class:
+```{r}
+I_0 = rep(0, nage)
+I_0[7] = 1
+S_0 = N - I_0
+R_0 = rep(0, nage)
+```
+In the box below, use the `ode` function to solve the system forward for 150 days.
+```{r}
+require("deSolve")
+Beta = tau * K_kenya
+params = c(gam = gam, Beta = Beta)
+init = c(S = S_0, I = I_0, R = R_0)
+times = seq(0, 150, 1)
+results = as.data.frame(ode(
+  y = init,
+  times = times,
+  func = sir_age_func,
+  parms = params
+))
+```
+To plot the results, we need to pick out the columns of `results` corresponding to each epidemiological class:
+```{r}
+S_cols = seq(2, nage+1)
+I_cols = seq(nage+2, 2*nage+1)
+R_cols = seq(2*nage+2, 3*nage+1)
+```
+In the box below, plot the time series of total infecteds (i.e. $(\sum\limits_{i}I_i)/N$):
+```{r}
+#
+
+
+#
+```
+Alternatively, we can look at the prevalence in each age class. In the box below, we plot prevalence in each of the four age classes under 20:
+```{r}
+prev_u20 = results[, I_cols[1:4]]
+plot(times, prev_u20[,1]/N[1],type="l",ylim = c(0, max(prev_u20)/min(N[1:4])))
+for (i in 2:4){
+  lines(times, prev_u20[,i]/N[i])
+  }
+```
+It should be immediately apparent that prevalence varies by age class, and so the contribution made by each age class to the epidemic is not just proportional to the size of that age class. In fact, we can estimate these proportional contributions directly using the next generation matrix. In the box below, plot the total infections over time using a log y scale.
+```{r}
+#
+
+
+#
+```
+You should find that there is an early exponential growth phase, during which the total infections grow linearly on this log scale. In the box below, create a bar chart of the cases in each class as a proportion of total cases ($I_i/\sum_{j}I_j$) for a single time point in this exponential growth phase. These proportions are stable during the exponential growth phase, and so it shouldn't matter exactly which time point you choose provided it is in this phase.
+```{r}
+#
+
+
+#
+```
+Now recall the formula for estimating the basic reproductive ratio $R_0$, which was the leading eigenvalue of the next generation matrix. In the box below, calculate the eigenvector corresponding to this leading eigenvalue, and plot it as a bar chart.
+```{r}
+#
+ngm = c()
+
+#
+```
+If your calculations are correct, you should find that this is the same bar chart as the profile of infections by class. This illustrates a general principle: the leading eigenvector of the next generation matrix is the profile of infections by class in the early exponential growth phase of an epidemic.
+
+Knowledge of these proportional contributions can be useful in planning control strategies. By accounting for the contribution of different groups to the spread of an epidemic, we can develop targetted interventions which make effective use of resources.
+
+### 6. Modelling an NPI
+
+One of the benefits of our contact matrix approach is that we can model non-pharmaceutical interventions (NPIs) like social distancing and which seek to reduce transmission of infection by reducing the frequency or intensity of infectious contacts. In the box below, we load in two matrices containing only contacts which occur at school, both from the same paper by Prem *et al.* which provided the "complete" contact matrices used above..
+```{r}
+K_kenya_sc = as.matrix(read.csv("data/K_Kenya_sc.csv"))
+K_uk_sc = as.matrix(read.csv("data/K_UK_sc.csv"))
+```
+
+In the box below use the `heatmap` function to plot out the two school-specific contact matrices. Remember to use the arguments `Colv = NA, Rowv = NA` to preserve the row and column orderings.
+
+```{r}
+#
+
+
+#
+```
+You should find that, as expected, it is children who experience the most school-specific contacts. The contact matrices we loaded in at the beginning of this notebook contained these school-based contacts, plus lots of other contacts. We can define a very rough model for school closure by removing the school-based contacts from the main contact matrices. In the box below, we define `K_kenya_npi`, which approximates the impact of removing school-based contacts.
+```{r}
+K_kenya_npi = K_kenya - K_kenya_sc
+```
+In the box below, use the `eigen` function to calculate $R_0$ in Nairobi when schools are closed, and compare with the value for the UK.
+```{r}
+#
+
+
+#
+```
+In this model, removing school-based contacts has a limited impact on reducing transmission. The proportional reduction in infection is also slightly larger under a Kenya-like contact structure than under a UK-like contact structure.
+
+You should also think about why removing school-based contacts may not be a very accurate approximation of the impact of school closure.
+
+### 7. Optimal distribution of vaccine
+
+Age structure allows for an arbitrary number of ways to distribute vaccine. For a model with $K$ age classes, we can define a vaccine profile $(v_1,...,v_K)$, where $v_a$ is the proportion of individuals in age class $a$ who are vaccinated under a vaccination program. The total number of doses administered under such a program will be given by $\sum\limits_av_aN_a$. In this workshop we will model a vaccine that prevents infection with 100% efficacy, so that vaccination effectively moves susceptible individuals into the recovered class. To supress infection, we need to distribute vaccination in such a way that the *effective reproductive ratio* (basic reproductive ratio after infection) $R_e$ is less than one. We can calculate $R_e$ by defining a post-vaccination next generation matrix. Since vaccination acts to remove a proportion $v_a$ of susceptibles in age class $a$ from the susceptible pool, vaccination scales the $a$th row of the next generation matrix by $(1-v_a)$. If we define a diagonal matrix $\mathbf{V}$ such that $V_{a,a}=(1-v_a)$ and $V_{a,b}=0$ for $a\neq b$, the post-vaccine next generation matrix will be given by
+$$
+\mathbf{V}\mathbf{L},
+$$
+and a sucessful vaccination program is one for which $\mathbf{V}\mathbf{L}$ has leading eigenvalue less than one.
+
+The simplest distribution is *uniform random vaccination*, under which we vaccinate each age class at the same rate. In the first workshop of this series we saw that for a homogeneous SIR model the critical vaccination threshold needed to supress the infection was $(1-1/R_0)$. As we can see below, if we vaccinate every age class at rate $(1-1/R_0)$ we get an effective reproductive ratio $R_e$ of 1, so for uniform random vaccination the critical vaccination threshold is the same as in a homogeneous model.
+```{r}
+# cat("Critical vaccination threshold under URV is",1-1/R0_ke,".")
+# vacc_profile = rep(1/R0_ke, nage)
+# ngm_vacc = diag(vacc_profile) %*% ngm
+# Re_urv = max(Re(eigen(ngm_vacc)$values))
+# cat("Under uniform random vaccination at rate 1-1/R0, Re=",Re_urv)
+```
+The number of doses administered under this scheme is given by $\sum_a (1-1/R_0)N_a = (1-1/R_0)N$. This is calculated in the box below:
+```{r}
+total_urv_doses = (1-1/R0_ke) * sum(N)
+cat("Total doses required under uniform random vaccination is", total_urv_doses)
+```
+
+Uniform random vaccination is by no means the most effective way to distribute vaccine vaccine. In general finding an optimal distribution of vaccine is difficult, but a good starting point is to use the infection profile we estimated above to distribute vaccine to the classes who contribute the most infection. If $\underline{\lambda}=(\lambda_a)$ is the unit leading eigenvector of the next generation matrix, then targetting the most infectious classes means vaccinating age class $i$ at rate $v\lambda_a$ for some net vaccination rate $v$. The total doses administered under such a scheme will be $v\sum_a\lambda_aN_a$, and the population-level vaccination rate will be $v\sum_a\lambda_aN_a/N$. Note that this is *emph* not equal to $v$ because $\lambda_a<1$. Since the maximum population-level vaccination rate is $1$, the maximum value of $v$ will be
+$$
+v_{\mathrm{max}} = (\sum_a\lambda_aN_a/N)^{-1}.
+$$
+In the box below, calculate the effective reproductive ratio over a range of values of $v$, and estimate the critical vaccination threshold by working out what proportion of the population are vaccinated when $R_e$ transitions from being greater than one to being less than one. For higher levels of vaccination, you will need to make sure that no element of your vaccine profile exceeds 1 by adding a line that says something like `vacc_profile[vacc_profile > 1] = 1`.
+```{r}
+#
+
+
+#
+```
+Now estimate the total number of doses required at your threshold level of vaccination:
+```{r}
+#
+
+
+#
+```
+You should find that the total doses needed for suppression is smaller than under uniform random vaccination.
+
+### 8. References
+
+- Keeling, M.J., Hill, E., Gorsich, E., Penman, B., Guyver-Fletcher, G., Holmes, A., Leng, T., McKimm, H., Tamborrino, M., Dyson, L., Tildesley, M., 2020. Predictions of COVID-19 dynamics in the UK: short-term forecasting and analysis of potential exit strategies. medRxiv 2020.05.10.20083683. https://doi.org/10.1101/2020.05.10.20083683
+- Kenya National Bureau of Statistics (KNBS), 2020. 2019 Kenya Population and Housing Census Volume III: Distribution of Population by Age, Sex and Administrative Units - Kenya National Bureau of Statistics. https://www.knbs.or.ke/?wpdmpro=2019-kenya-population-and-housing-censusvolume-
+iii-distribution-of-population-by-age-sex-and-administrative-units.
+- Keeling, M.J., Rohani, P., 2011. Modeling infectious diseases in humans and animals, Modeling Infectious Diseases in Humans and Animals.
+- Prem K, Cook AR, Jit M (2017) Projecting social contact matrices in 152 countries using contact surveys and demographic data. PLOS Computational Biology 13(9): e1005697. https://doi.org/10.1371/journal.pcbi.1005697
+- Prem, K., Liu, Y., Russell, T.W., Kucharski, A.J., Eggo, R.M., Davies, N., Flasche, S., Clifford, S., Pearson, C.A.B., Munday, J.D., Abbott, S., Gibbs, H., Rosello, A., Quilty, B.J., Jombart, T., Sun, F., Diamond, C., Gimma, A., Zandvoort, K. van, Funk, S., Jarvis, C.I., Edmunds, W.J., Bosse, N.I., Hellewell, J., Jit, M., Klepac, P., 2020. The effect of control strategies to reduce social mixing on outcomes of the COVID-19 epidemic in Wuhan, China: a modelling study. Lancet Public Heal. 5, e261-e270. https://doi.org/10.1016/S2468-2667(20)30073-6
+- Martcheva, M., 2015. An Introduction to Mathematical Epidemiology, Texts in Applied Mathematics. Springer US, Boston, MA. https://doi.org/10.1007/978-1-4899-7612-3
+- Wagner, M., Kombe, I.K., Kiti, M.C., Aziza, R., Barasa, E., Nokes, D.J., 2020. Using contact data to model the impact of contact tracing and physical distancing to control the SARS-CoV-2 outbreak in Kenya. Wellcome Open Res. 5, 212. https://doi.org/10.12688/wellcomeopenres.16264.1
+
